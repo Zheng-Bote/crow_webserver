@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.31)
-project(CrowQtServer LANGUAGES CXX)
+project(CrowQtServer 
+    VERSION 0.1.1
+    LANGUAGES CXX)
 
 #CXX=clang++ cmake ..
 # make -j$(nproc)
+
 
 # --- Compiler Settings ---
 set(CMAKE_CXX_STANDARD 23)

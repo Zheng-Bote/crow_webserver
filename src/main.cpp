@@ -1,3 +1,6 @@
+/**
+0.1.1
+*/
 #include <iostream>
 #include <thread>
 #include <string>
@@ -234,6 +237,17 @@ void runCrowServer() {
         }
 
         QString qFilename = QString::fromStdString(rawFilename);
+
+        // --- FIX START: Anführungszeichen entfernen ---
+        // Entferne führende Anführungszeichen (" oder ')
+        if (qFilename.startsWith('"') || qFilename.startsWith('\'')) {
+            qFilename.remove(0, 1);
+        }
+        // Entferne abschließende Anführungszeichen
+        if (qFilename.endsWith('"') || qFilename.endsWith('\'')) {
+            qFilename.chop(1);
+        }
+        
         QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
         
         // 4. Zielverzeichnis bauen
