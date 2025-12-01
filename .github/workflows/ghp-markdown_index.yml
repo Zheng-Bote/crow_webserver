@@ -1,0 +1,46 @@
+name: GHP - create markdown indexes for GH Pages
+# author: ZHENG Robert
+run-name: GHP create/update markdown indexes by ${{ github.actor }}
+#  - ${{ github.GITHUB_EVENT_NAME }} on ${{ github.GITHUB_REF }}
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: write
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "gh-pages"
+
+      - name: Generated Markdown Readmes main
+        uses: DaanV2/Markdown-Action-Create-Indexes@v5.0.2
+        with:
+          folder: ./docs/Documentation/
+          #filename: README.md
+          #content-file: .content.md
+          exclude: |
+            about.md
+            links.md
+            *.html
+
+      - name: commit and push
+        uses: github-actions-x/commit@v2.9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          push-branch: "gh-pages"
+          commit-message: "appended by Github Actions"
+          force-add: "true"
+          #files: README.md
+          name: "github-actions[bot]"
+          email: "github-actions[bot]@users.noreply.github.com"

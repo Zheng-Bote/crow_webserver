@@ -1,0 +1,29 @@
+name: Repo - update Readme
+# author: Zheng Robert
+
+run-name: update README by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
+    paths:
+      - "README.md"
+      - "dist/**"
+      - "docs/**"
+      - ".github/actions/**"
+      - ".github/workflows/**"
+
+permissions:
+  checks: write
+  contents: write
+
+jobs:
+  call-workflow-tree:
+    uses: ./.github/workflows/repo-create_tree_readme.yml
+    secrets: inherit
+  call-workflow-doctoc:
+    needs: call-workflow-tree
+    uses: ./.github/workflows/repo-create_doctoc_md.yml
+    secrets: inherit

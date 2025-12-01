@@ -1,0 +1,55 @@
+name: Repo - create TOC of README
+# description: create Table of Contents. See also https://github.com/Zheng-Bote/gha-doctoc/
+# author: Zheng Robert
+
+# README.md:
+# <!-- START doctoc -->
+# <!-- END doctoc -->
+
+run-name: create README table of contents by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      Markdown_File:
+        description: local path/to/markdown-file
+        default: ./README.md
+        required: false
+      Folding:
+        description: TOC folded
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches:
+      - "main"
+    paths:
+      - "README.md"
+
+permissions:
+  contents: write
+
+env:
+  MARKDOWN_File: ./README.md
+  TOC_FOLDED: false
+
+jobs:
+  generateTOC:
+    name: TOC Generator
+    runs-on: ubuntu-latest
+    steps:
+      - name: set_Markdown_file
+        if: ${{ inputs.Markdown_File }} > 0
+        run: |
+          echo "MARKDOWN_File=${{ inputs.Markdown_File }}" >> $GITHUB_ENV
+
+      - name: set_TOC_folded_or_not
+        if: ${{ inputs.Folding }} == true
+        run: |
+          echo "TOC_FOLDED=true" >> $GITHUB_ENV
+
+      - uses: Zheng-Bote/gha-toc-generator@v4.3.4
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_PATHS: ${{ env.MARKDOWN_File }}
+          FOLDING: ${{ env.TOC_FOLDED }}

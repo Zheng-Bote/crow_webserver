@@ -1,0 +1,58 @@
+name: Repo - create Repo-Tree in README.md
+# description: document file-strcuture of repo
+# README.md: <!-- readme-tree start --><!-- readme-tree end -->
+# https://github.com/RavelloH/readme-tree
+
+run-name: create Repo-Tree structure in README by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  #push:
+  #  branches:
+  #    - main
+  #  paths:
+  #    - "dist/**"
+  #    - "docs/**"
+  #    - ".github/**"
+
+permissions:
+  checks: write
+  contents: write
+
+jobs:
+  sync-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: "main"
+
+      - name: Tree
+        uses: RavelloH/readme-tree@v1.1.0
+
+      - name: Verify Changed files
+        uses: tj-actions/verify-changed-files@v20
+        id: verify_changed_files
+        with:
+          files: |
+            README.md
+
+      - name: README.md changed
+        if: steps.verify_changed_files.outputs.files_changed == 'false'
+        run: |
+          echo "README.md has no uncommitted changes"
+          #exit 1
+
+      - name: commit and push
+        if: steps.verify_changed_files.outputs.files_changed == 'true'
+        uses: github-actions-x/commit@v2.9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          push-branch: "main"
+          commit-message: "appended by Github Actions"
+          force-add: "true"
+          files: README.md
+          name: "github-actions[bot]"
+          email: "github-actions[bot]@users.noreply.github.com"

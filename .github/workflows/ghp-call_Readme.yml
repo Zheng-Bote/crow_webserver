@@ -1,0 +1,22 @@
+name: GHP - update Readme
+# author: Zheng Robert
+
+run-name: GHP update README by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["gh-pages"]
+
+permissions:
+  checks: write
+  contents: write
+
+jobs:
+  call-workflow-doctoc:
+    uses: ./.github/workflows/ghp-create_doctoc.yml
+    secrets: inherit
+  call-workflow-index:
+    needs: call-workflow-doctoc
+    uses: ./.github/workflows/ghp-markdown_index.yml
+    secrets: inherit
