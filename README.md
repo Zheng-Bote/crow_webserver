@@ -161,15 +161,16 @@ bla bla ... with a little help from my friends
 │       ├── repo-create_doctoc.yml_
 │       ├── repo-create_doctoc_md.yml
 │       └── repo-create_tree_readme.yml
+├── .gitignore
 ├── LICENSE
-├── LICENSE_Apache-2
-├── LICENSE_GPL-2
-├── LICENSE_GPL-3
-├── LICENSE_MIT
 ├── README.md
+├── src
+│   ├── CMakeLists.txt
+│   ├── main copy.cpp
+│   └── main.cpp
 └── tree.bak
 
-6 directories, 21 files
+7 directories, 21 files
 ```
 <!-- readme-tree end -->
 
