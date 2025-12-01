@@ -26,6 +26,7 @@
   - [Dependencies](#dependencies)
   - [folder structure](#folder-structure)
   - [Usage/Examples/Tests](#usageexamplestests)
+    - [Tests](#tests)
 - [API Reference](#api-reference)
   - [Inputs](#inputs)
   - [Outputs](#outputs)
@@ -43,8 +44,6 @@
   - [Screenshots](#screenshots)
 - [Authors and License](#authors-and-license)
   - [License](#license)
-    - [MIT License](#mit-license)
-    - [Apache License](#apache-license)
   - [Authors](#authors)
     - [Code Contributors](#code-contributors)
 
