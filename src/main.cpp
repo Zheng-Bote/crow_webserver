@@ -1,5 +1,5 @@
 /**
-0.1.1
+0.2.0
 */
 #include <iostream>
 #include <thread>
@@ -56,7 +56,15 @@ public:
             ")"
         );
 
-        if (!ok) qDebug() << "Table creation failed:" << query.lastError().text();
+        if (!ok) qDebug() << "User table creation failed:" << query.lastError().text();
+
+        ok = query.exec("CREATE TABLE IF NOT EXISTS refresh_tokens ("
+                   "token TEXT PRIMARY KEY, "
+                   "username TEXT, "
+                   "expires_at INTEGER)" // Unix Timestamp
+        );
+        if (!ok) qDebug() << "Refresh token table creation failed:" << query.lastError().text();
+
 
         query.exec("SELECT count(*) FROM users WHERE username = 'admin'");
         if (query.next() && query.value(0).toInt() == 0) {
@@ -99,6 +107,63 @@ public:
             }
         }
         return false;
+    }
+
+    static void storeRefreshToken(const std::string& username, const std::string& token) {
+        QString connName = QString("worker_conn_%1").arg((quint64)QThread::currentThreadId());
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+            db.setDatabaseName(DB_FILENAME);
+            if(db.open()) {
+                QSqlQuery q(db);
+                // Alte Tokens des Users löschen (optional, erlaubt nur 1 Session)
+                q.prepare("DELETE FROM refresh_tokens WHERE username = :u");
+                q.bindValue(":u", QString::fromStdString(username));
+                q.exec();
+
+                // Neuen Token speichern (Gültig z.B. 7 Tage)
+                qint64 expiry = QDateTime::currentSecsSinceEpoch() + (7 * 24 * 60 * 60);
+                
+                q.prepare("INSERT INTO refresh_tokens (token, username, expires_at) VALUES (:t, :u, :e)");
+                q.bindValue(":t", QString::fromStdString(token));
+                q.bindValue(":u", QString::fromStdString(username));
+                q.bindValue(":e", expiry);
+                q.exec();
+            }
+        }
+        QSqlDatabase::removeDatabase(connName);
+    }
+
+    // NEU: Refresh Token validieren und Username zurückgeben
+    static std::string validateRefreshToken(const std::string& token) {
+        QString connName = QString("refresh_conn_%1").arg((quint64)QThread::currentThreadId());
+        std::string username = "";
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+            db.setDatabaseName(DB_FILENAME);
+            if(db.open()) {
+                QSqlQuery q(db);
+                q.prepare("SELECT username, expires_at FROM refresh_tokens WHERE token = :t");
+                q.bindValue(":t", QString::fromStdString(token));
+                
+                if (q.exec() && q.next()) {
+                    qint64 exp = q.value(1).toLongLong();
+                    qint64 now = QDateTime::currentSecsSinceEpoch();
+                    
+                    if (now < exp) {
+                        username = q.value(0).toString().toStdString();
+                    } else {
+                        // Abgelaufen -> Löschen
+                        QSqlQuery del(db);
+                        del.prepare("DELETE FROM refresh_tokens WHERE token = :t");
+                        del.bindValue(":t", QString::fromStdString(token));
+                        del.exec();
+                    }
+                }
+            }
+        }
+        QSqlDatabase::removeDatabase(connName);
+        return username;
     }
 };
 
@@ -149,6 +214,18 @@ struct AuthMiddleware : crow::ILocalMiddleware {
     }
 };
 
+// Zufalls-Strings für Refresh Token
+// TODO: replace with opnessl/rand.h
+std::string generateRandomString(size_t length) {
+    const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    std::string result;
+    result.resize(length);
+    for (size_t i = 0; i < length; i++) {
+        result[i] = charset[rand() % (sizeof(charset) - 1)];
+    }
+    return result;
+}
+
 // -------------------------------------------------------------------------
 // SERVER THREAD
 // -------------------------------------------------------------------------
@@ -169,16 +246,51 @@ void runCrowServer() {
         std::string pass = json["password"].s();
 
         if (DbManager::verifyUser(user, pass)) {
-            auto token = jwt::create()
+            // 1. Access Token (Kurz: 15 Min)
+            auto accessToken = jwt::create()
                 .set_issuer(JWT_ISSUER)
                 .set_type("JWS")
                 .set_payload_claim("username", jwt::claim(user))
                 .set_issued_at(std::chrono::system_clock::now())
-                .set_expires_at(std::chrono::system_clock::now() + std::chrono::hours{2})
+                .set_expires_at(std::chrono::system_clock::now() + std::chrono::minutes{15}) // <-- KURZ
+                .sign(jwt::algorithm::hs256{JWT_SECRET});
+
+            // 2. Refresh Token (Lang: Random String)
+            std::string refreshToken = generateRandomString(64);
+            DbManager::storeRefreshToken(user, refreshToken);
+
+            crow::json::wvalue resp;
+            resp["token"] = accessToken;
+            resp["refreshToken"] = refreshToken; // <-- Senden
+            return crow::response(resp);
+        }
+        return crow::response(401, "Invalid credentials");
+    });
+
+    // --- REFRESH ROUTE ---
+    CROW_ROUTE(app, "/refresh").methods(crow::HTTPMethod::POST)
+    ([](const crow::request& req){
+        auto json = crow::json::load(req.body);
+        if (!json || !json.has("refreshToken")) return crow::response(400);
+
+        std::string rToken = json["refreshToken"].s();
+        
+        // Prüfen ob Refresh Token in DB existiert und gültig ist
+        std::string user = DbManager::validateRefreshToken(rToken);
+
+        if (!user.empty()) {
+            // Neuen Access Token ausstellen
+            auto newAccessToken = jwt::create()
+                .set_issuer(JWT_ISSUER)
+                .set_type("JWS")
+                .set_payload_claim("username", jwt::claim(user))
+                .set_issued_at(std::chrono::system_clock::now())
+                .set_expires_at(std::chrono::system_clock::now() + std::chrono::minutes{15})
                 .sign(jwt::algorithm::hs256{JWT_SECRET});
 
             crow::json::wvalue resp;
-            resp["token"] = token;
+            resp["token"] = newAccessToken;
+            // Optional: Auch den Refresh Token rotieren (neuen ausstellen) für max. Sicherheit
             return crow::response(resp);
         }
 
