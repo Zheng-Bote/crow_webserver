@@ -1,10 +1,16 @@
 /**
-0.2.0
+0.2.1
 */
 #include <iostream>
 #include <thread>
 #include <string>
 #include <vector>
+#include <format>
+#include <set>
+#include <algorithm> 
+
+#include <openssl/rand.h>
+#include <stdexcept>
 
 // --- Crow & JWT ---
 #include "crow.h"
@@ -28,209 +34,26 @@
 #include <QThread>
 #include <QDebug>
 
-// Konfiguration
-const std::string JWT_SECRET = "mein_sehr_geheimes_secret_key_12345";
-const std::string JWT_ISSUER = "crow_qt_server";
-const QString DB_FILENAME    = "app_database.sqlite";
+#include "includes/rz_dbmanager.hpp"
+#include "includes/rz_middleware.hpp"
+#include "includes/rz_helpers.hpp"
 
-// -------------------------------------------------------------------------
-// DATABASE MANAGER
-// -------------------------------------------------------------------------
-class DbManager {
-public:
-    static void initMainDatabase() {
-        QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "main_setup_conn");
-        db.setDatabaseName(DB_FILENAME);
-
-        if (!db.open()) {
-            qCritical() << "FATAL: Could not open database:" << db.lastError().text();
-            return;
-        }
-
-        QSqlQuery query(db);
-        bool ok = query.exec(
-            "CREATE TABLE IF NOT EXISTS users ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "  username TEXT UNIQUE NOT NULL, "
-            "  password_hash TEXT NOT NULL"
-            ")"
-        );
-
-        if (!ok) qDebug() << "User table creation failed:" << query.lastError().text();
-
-        ok = query.exec("CREATE TABLE IF NOT EXISTS refresh_tokens ("
-                   "token TEXT PRIMARY KEY, "
-                   "username TEXT, "
-                   "expires_at INTEGER)" // Unix Timestamp
-        );
-        if (!ok) qDebug() << "Refresh token table creation failed:" << query.lastError().text();
-
-
-        query.exec("SELECT count(*) FROM users WHERE username = 'admin'");
-        if (query.next() && query.value(0).toInt() == 0) {
-            std::string hash = BCrypt::generateHash("secret");
-            
-            QSqlQuery insert(db);
-            insert.prepare("INSERT INTO users (username, password_hash) VALUES (:u, :p)");
-            insert.bindValue(":u", "admin");
-            insert.bindValue(":p", QString::fromStdString(hash));
-            insert.exec();
-            qDebug() << "Initial Admin user created (User: admin, Pass: secret)";
-        }
-        db.close();
-    }
-
-    static bool verifyUser(const std::string& username, const std::string& password) {
-        QString connName = QString("worker_conn_%1").arg((quint64)QThread::currentThreadId());
-
-        {
-            QSqlDatabase db;
-            if (QSqlDatabase::contains(connName)) {
-                db = QSqlDatabase::database(connName);
-            } else {
-                db = QSqlDatabase::addDatabase("QSQLITE", connName);
-                db.setDatabaseName(DB_FILENAME);
-            }
-
-            if (!db.isOpen() && !db.open()) {
-                qCritical() << "Worker DB Open Error:" << db.lastError().text();
-                return false;
-            }
-
-            QSqlQuery query(db);
-            query.prepare("SELECT password_hash FROM users WHERE username = :u");
-            query.bindValue(":u", QString::fromStdString(username));
-
-            if (query.exec() && query.next()) {
-                std::string storedHash = query.value(0).toString().toStdString();
-                return BCrypt::validatePassword(password, storedHash);
-            }
-        }
-        return false;
-    }
-
-    static void storeRefreshToken(const std::string& username, const std::string& token) {
-        QString connName = QString("worker_conn_%1").arg((quint64)QThread::currentThreadId());
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
-            db.setDatabaseName(DB_FILENAME);
-            if(db.open()) {
-                QSqlQuery q(db);
-                // Alte Tokens des Users löschen (optional, erlaubt nur 1 Session)
-                q.prepare("DELETE FROM refresh_tokens WHERE username = :u");
-                q.bindValue(":u", QString::fromStdString(username));
-                q.exec();
-
-                // Neuen Token speichern (Gültig z.B. 7 Tage)
-                qint64 expiry = QDateTime::currentSecsSinceEpoch() + (7 * 24 * 60 * 60);
-                
-                q.prepare("INSERT INTO refresh_tokens (token, username, expires_at) VALUES (:t, :u, :e)");
-                q.bindValue(":t", QString::fromStdString(token));
-                q.bindValue(":u", QString::fromStdString(username));
-                q.bindValue(":e", expiry);
-                q.exec();
-            }
-        }
-        QSqlDatabase::removeDatabase(connName);
-    }
-
-    // NEU: Refresh Token validieren und Username zurückgeben
-    static std::string validateRefreshToken(const std::string& token) {
-        QString connName = QString("refresh_conn_%1").arg((quint64)QThread::currentThreadId());
-        std::string username = "";
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
-            db.setDatabaseName(DB_FILENAME);
-            if(db.open()) {
-                QSqlQuery q(db);
-                q.prepare("SELECT username, expires_at FROM refresh_tokens WHERE token = :t");
-                q.bindValue(":t", QString::fromStdString(token));
-                
-                if (q.exec() && q.next()) {
-                    qint64 exp = q.value(1).toLongLong();
-                    qint64 now = QDateTime::currentSecsSinceEpoch();
-                    
-                    if (now < exp) {
-                        username = q.value(0).toString().toStdString();
-                    } else {
-                        // Abgelaufen -> Löschen
-                        QSqlQuery del(db);
-                        del.prepare("DELETE FROM refresh_tokens WHERE token = :t");
-                        del.bindValue(":t", QString::fromStdString(token));
-                        del.exec();
-                    }
-                }
-            }
-        }
-        QSqlDatabase::removeDatabase(connName);
-        return username;
-    }
-};
-
-// -------------------------------------------------------------------------
-// AUTH MIDDLEWARE
-// -------------------------------------------------------------------------
-struct AuthMiddleware : crow::ILocalMiddleware {
-    struct context {
-        std::string current_user;
-    };
-
-    void before_handle(crow::request& req, crow::response& res, context& ctx) {
-        std::string authHeader = req.get_header_value("Authorization");
-        
-        if (authHeader.empty()) {
-            res.code = 401;
-            res.end(R"({"error": "Missing Authorization Header"})");
-            return;
-        }
-
-        if (authHeader.substr(0, 7) != "Bearer ") {
-            res.code = 401;
-            res.end(R"({"error": "Invalid Authorization Header format"})");
-            return;
-        }
-
-        std::string token = authHeader.substr(7);
-
-        try {
-            auto decoded = jwt::decode(token);
-            auto verifier = jwt::verify()
-                .allow_algorithm(jwt::algorithm::hs256{JWT_SECRET})
-                .with_issuer(JWT_ISSUER);
-
-            verifier.verify(decoded);
-
-            if (decoded.has_payload_claim("username")) {
-                ctx.current_user = decoded.get_payload_claim("username").as_string();
-            }
-
-        } catch (const std::exception& e) {
-            res.code = 401;
-            res.end("Token verification failed: " + std::string(e.what()));
-        }
-    }
-
-    void after_handle(crow::request& /*req*/, crow::response& /*res*/, context& /*ctx*/) {
-    }
-};
-
-// Zufalls-Strings für Refresh Token
-// TODO: replace with opnessl/rand.h
-std::string generateRandomString(size_t length) {
-    const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    std::string result;
-    result.resize(length);
-    for (size_t i = 0; i < length; i++) {
-        result[i] = charset[rand() % (sizeof(charset) - 1)];
-    }
-    return result;
-}
+#include "includes/rz_config.hpp"
 
 // -------------------------------------------------------------------------
 // SERVER THREAD
 // -------------------------------------------------------------------------
 void runCrowServer() {
-    crow::App<AuthMiddleware> app;
+    crow::App<crow::CORSHandler, AuthMiddleware> app;
+
+    // CORS for webclients
+    auto& cors = app.get_middleware<crow::CORSHandler>();
+cors
+      .global()
+        .headers("Content-Type", "Authorization") // Wichtig für JWT
+        .methods("POST"_method, "GET"_method, "OPTIONS"_method)
+        .origin("*"); // for development OK, in Prod better specific Domain
+    
 
     // --- LOGIN ---
     CROW_ROUTE(app, "/login").methods(crow::HTTPMethod::POST)
@@ -265,6 +88,21 @@ void runCrowServer() {
             return crow::response(resp);
         }
         return crow::response(401, "Invalid credentials");
+    });
+
+    // --- LOGOUT ROUTE ---
+    CROW_ROUTE(app, "/logout").methods(crow::HTTPMethod::POST)
+    ([](const crow::request& req){
+        auto json = crow::json::load(req.body);
+        
+        // Wir erwarten den Refresh Token, um ihn zu löschen
+        if (json && json.has("refreshToken")) {
+            std::string rToken = json["refreshToken"].s();
+            DbManager::revokeRefreshToken(rToken);
+        }
+        
+        // Wir antworten immer mit Erfolg, damit der Client aufräumt
+        return crow::response(200, "Logged out successfully");
     });
 
     // --- REFRESH ROUTE ---
@@ -360,7 +198,18 @@ void runCrowServer() {
             qFilename.chop(1);
         }
         
-        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+        // --- Dateityp Validierung ---
+        if (!isAllowedImage(qFilename.toStdString())) {
+            res.code = 400;
+            crow::json::wvalue json;
+            json["error"] = "Invalid file type. Only png, jpg, jpeg, bmp, tiff, gif allowed.";
+            res.write(json.dump());
+            res.end();
+            return;
+        }
+        // ----------------------------------
+
+        //QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
         
         // 4. Zielverzeichnis bauen
         // Basis ist "uploads". Wenn userSubDir leer ist, bleibt es "uploads/"
@@ -378,7 +227,8 @@ void runCrowServer() {
         }
 
         // 6. Datei speichern
-        QString finalPath = targetDir + "/" + QString("%1_%2").arg(timestamp, qFilename);
+        // QString finalPath = targetDir + "/" + QString("%1_%2").arg(timestamp, qFilename);
+        QString finalPath = targetDir + "/" + QString("%1").arg(qFilename);
 
         QFile file(finalPath);
         if (file.open(QIODevice::WriteOnly)) {
@@ -432,12 +282,15 @@ void runCrowServer() {
         }
 
         QString qFilename = QString::fromStdString(rawFilename);
-        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+        qDebug() << "qFilename: " << qFilename;
+        //QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
         
         QDir dir;
         if (!dir.exists("uploads")) dir.mkdir("uploads");
 
-        QString finalPath = QString("uploads/%1_%2").arg(timestamp, qFilename);
+        //QString finalPath = QString("uploads/%1_%2").arg(timestamp, qFilename);
+        QString finalPath = QString("uploads/%1").arg(qFilename);
+        qDebug() << "finalPath: " << finalPath;
 
         QFile file(finalPath);
         if (file.open(QIODevice::WriteOnly)) {
@@ -457,9 +310,74 @@ void runCrowServer() {
         }
     });
 
-    qDebug() << "Crow Server is starting on port 8080 (Thread:" << QThread::currentThreadId() << ")";
+
+
+// --- SYSTEM ROUTE ---
+CROW_ROUTE(app, "/system/json")
+  ([]
+   {
+    crow::json::wvalue x({{"PROJECT_NAME", PROJECT_NAME}, 
+                            {"PROJECT_VERSION", PROJECT_VERSION}, 
+                            {"PROJECT_DESCRIPTION", PROJECT_DESCRIPTION},
+                            {"PROJECT_HOMEPAGE_URL", PROJECT_HOMEPAGE_URL},
+                            {"PROG_CREATED", PROG_CREATED},
+                            {"PROG_AUTHOR", PROG_AUTHOR},
+                            {"PROG_ORGANIZATION_NAME", PROG_ORGANIZATION_NAME},
+                            {"PROG_ORGANIZATION_DOMAIN", PROG_ORGANIZATION_DOMAIN},
+                            {"PROG_LONGNAME", PROG_LONGNAME},
+                            {"PROJECT_EXECUTABLE", PROJECT_EXECUTABLE},
+                            {"CMAKE_CXX_STANDARD", CMAKE_CXX_STANDARD},
+                            {"CMAKE_CXX_COMPILER", CMAKE_CXX_COMPILER},
+                            {"CMAKE_QT_VERSION", CMAKE_QT_VERSION},
+                            
+                        });
+    return x; });
+
+    // --- STATIC ROUTE ---
+CROW_ROUTE(app, "/")
+  ([](const crow::request &, crow::response &res)
+   {
+        //replace cat.jpg with your file path
+        res.set_static_file_info("static/index.html");
+        res.end(); });
+
+
+  CROW_ROUTE(app, "/static")
+  ([](const crow::request &, crow::response &res)
+   {
+        //replace cat.jpg with your file path
+        res.set_static_file_info("static/test.txt");
+        res.end(); });
+
+  CROW_ROUTE(app, "/static/<string>")
+  ([](const crow::request &, crow::response &res, std::string para)
+   {
+        //replace cat.jpg with your file path
+        res.set_static_file_info("static/" + para);
+        res.end(); });
+
+        // --- TEMPLATE ROUTE ---
+  CROW_ROUTE(app, "/template")
+  ([]()
+   {
+            auto page = crow::mustache::load("template.html");
+            crow::mustache::context ctx;
+            ctx["doof"] = "doofie";
+            ctx["Morgens"] = false;
+            ctx["Mittags"] = true;
+            ctx["morgen_gruss"] = "Guten Morgen";
+            ctx["mahlzeit"] = "Maahlzeit";
+
+            return page.render(ctx); });
+
+
+    /* --- END ROUTES --- */
+
+    qDebug() << std::format("{} v{} is starting on port 8080 (Thread: {})", PROJECT_EXECUTABLE, PROJECT_VERSION, QThread::currentThreadId());
     app.port(8080).multithreaded().run();
 }
+
+
 
 int main(int argc, char *argv[]) {
     QCoreApplication app(argc, argv);

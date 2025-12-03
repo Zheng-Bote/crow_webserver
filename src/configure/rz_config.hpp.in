@@ -1,0 +1,35 @@
+/**
+ * @file config.hpp.in
+ * @author ZHENG Robert (robert.hase-zheng.net)
+ * @brief configuration
+ * @version 2.0.0
+ * @date 2025-11-15
+ *
+ * @copyright Copyright (c) 2025 ZHENG Robert
+ *
+ */
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+static const std::string PROJECT_NAME = "@PROJECT_NAME@";
+static const std::string PROG_LONGNAME = "${PROG_LONGNAME}";
+static const std::string PROJECT_DESCRIPTION = "@PROJECT_DESCRIPTION@";
+
+static const std::string PROJECT_EXECUTABLE = "@EXECUTABLE_NAME@";
+
+static const std::string PROJECT_VERSION = "@PROJECT_VERSION@";
+static const std::int32_t PROJECT_VERSION_MAJOR{@PROJECT_VERSION_MAJOR@};
+static const std::int32_t PROJECT_VERSION_MINOR{@PROJECT_VERSION_MINOR@};
+static const std::int32_t PROJECT_VERSION_PATCH{@PROJECT_VERSION_PATCH@};
+
+static const std::string PROJECT_HOMEPAGE_URL = "@PROJECT_HOMEPAGE_URL@";
+static const std::string PROG_AUTHOR = "${PROG_AUTHOR}";
+static const std::string PROG_CREATED = "${PROG_CREATED}";
+static const std::string PROG_ORGANIZATION_NAME = "${PROG_ORGANIZATION_NAME}";
+static const std::string PROG_ORGANIZATION_DOMAIN = "${PROG_ORGANIZATION_DOMAIN}";
+
+static const std::string CMAKE_CXX_STANDARD = "c++${CMAKE_CXX_STANDARD}";
+static const std::string CMAKE_CXX_COMPILER = "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}";
+static const std::string CMAKE_QT_VERSION = "${CMAKE_QTV}";
