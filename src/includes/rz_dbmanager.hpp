@@ -2,10 +2,28 @@
 // DATABASE MANAGER
 // -------------------------------------------------------------------------
 
+#pragma once
+
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QThread>
+#include <QString>
+#include <QSqlError>
+#include <QDateTime>
+#include <QFile>
+#include <QTextStream>
+#include <QDebug>
+#include <QProcessEnvironment>
+
+#include "bcrypt/BCrypt.hpp"
+
+
 const QString DB_FILENAME    = "app_database.sqlite";
 
 class DbManager {
 public:
+static QSqlDatabase getNewConnection(const QString& connectionName);
+
     static void initMainDatabase() {
         QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "main_setup_conn");
         db.setDatabaseName(DB_FILENAME);

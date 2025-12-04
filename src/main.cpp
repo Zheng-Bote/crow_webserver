@@ -318,6 +318,75 @@ cors
     });
 
 
+    // --- GALLERY LIST ROUTE ---
+    // Parameter: page (int), path (string, z.B. "Asia/China")
+    CROW_ROUTE(app, "/api/gallery").methods(crow::HTTPMethod::GET)
+    ([](const crow::request& req){
+        int page = 1;
+        int limit = 20;
+        std::string pathFilter = "";
+
+        if (req.url_params.get("page")) page = std::stoi(req.url_params.get("page"));
+        if (req.url_params.get("path")) pathFilter = req.url_params.get("path");
+
+        int offset = (page - 1) * limit;
+
+        // DB Verbindung
+        // Hinweis: Hier eine neue Connection holen (DbManager::getNewConnection...)
+        // Der Einfachheit halber nutze ich hier Pseudo-Code für den SQL Teil:
+        
+        QSqlDatabase db = DbManager::getNewConnection("gallery_read");
+        if (!db.open()) return crow::response(500, "DB Error");
+
+        QSqlQuery q(db);
+        QString sql = "SELECT p.id, p.file_name, p.file_path, l.city, l.country "
+                      "FROM pictures p "
+                      "LEFT JOIN meta_location l ON p.id = l.ref_picture "
+                      "WHERE 1=1 ";
+        
+        // Filterung nach Pfad (Breadcrumbs Logik)
+        // Wenn path="Asia/China", suchen wir "Asia/China%"
+        if (!pathFilter.empty()) {
+            sql += "AND p.file_path LIKE :path ";
+        }
+
+        sql += "ORDER BY p.file_datetime DESC LIMIT :lim OFFSET :off";
+
+        q.prepare(sql);
+        if (!pathFilter.empty()) {
+            q.bindValue(":path", QString::fromStdString(pathFilter) + "%");
+        }
+        q.bindValue(":lim", limit);
+        q.bindValue(":off", offset);
+        
+        q.exec();
+
+        crow::json::wvalue result;
+        int i = 0;
+        while(q.next()) {
+            result[i]["id"] = q.value("id").toInt();
+            result[i]["filename"] = q.value("file_name").toString().toStdString();
+            
+            // WICHTIG: Der Pfad für das Frontend (NGINX /media/)
+            // file_path in DB ist z.B. "Asia/China/Yunnan"
+            // file_name ist "img.jpg"
+            // Result URL: "/media/Asia/China/Yunnan/img.jpg"
+            std::string relPath = q.value("file_path").toString().toStdString();
+            std::string fName = q.value("file_name").toString().toStdString();
+            
+            // Pfade sauber verbinden (keine doppelten Slashes)
+            if (relPath.back() != '/') relPath += "/";
+            
+            result[i]["url"] = "http://beelink.local/media/" + relPath + fName;
+            result[i]["city"] = q.value("city").toString().toStdString();
+            result[i]["country"] = q.value("country").toString().toStdString();
+            i++;
+        }
+        
+        db.close();
+        return crow::response(result);
+    });
+
 
 // --- SYSTEM ROUTE ---
 CROW_ROUTE(app, "/system/json")

@@ -1,1 +1,291 @@
 das ist static/test.txt
+
+
+Du hast jetzt eine vollständige, moderne Full-Stack-Architektur aufgebaut, die sich vor professionellen Lösungen nicht verstecken muss:
+
+Backend (C++23/Crow):
+
+Hochperformant & Multithreaded.
+
+Sicher durch JWT (Access/Refresh), Bcrypt und Input-Validierung (Dateitypen, Pfade).
+
+Saubere Datenbank-Integration via SQLite.
+
+Desktop Client (Qt6):
+
+Native Performance.
+
+Komfortable Features wie Progress-Bars und Auto-Login-Refresh.
+
+Web Client (Angular):
+
+Moderne SPA mit Routing und Guards.
+
+Reaktives State-Management mit Signals.
+
+Benutzerfreundliche Validierung direkt im Browser.
+
+Falls du das Projekt nun "produktionsbereit" machen möchtest, wären die logischen nächsten Schritte meistens:
+
+Docker: Alles in Container verpacken (einen für den C++ Server, einen Nginx für Angular), damit es überall sofort läuft.
+
+HTTPS: Einbinden von SSL-Zertifikaten (z.B. Let's Encrypt), damit die Passwörter nicht im Klartext durchs Netz gehen.
+
+
+
+// ###### NGINX 
+
+/etc/nginx/sites-available/crow-project
+
+# Definition des C++ Backend Upstreams
+upstream crow_backend {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name dein-server-name.com localhost; # Anpassen!
+
+    # Wurzelverzeichnis der gebauten Angular App
+    # PFAD ANPASSEN: Wohin du 'ng build' kopiert hast
+    root /var/www/crow-web-client/browser;
+    
+    index index.html;
+
+    # Sicherheit: NGINX Version verstecken
+    server_tokens off;
+
+    # WICHTIG: Maximale Upload-Größe erhöhen (z.B. auf 20 Megabyte)
+    client_max_body_size 20M;
+
+    # --- 1. FRONTEND (Angular SPA) ---
+    location / {
+        # Versuche Datei zu finden ($uri), dann Ordner ($uri/), 
+        # sonst leite alles an index.html (für Angular Routing)
+        try_files $uri $uri/ /index.html;
+    }
+
+    # --- 2. BACKEND (C++ Crow API) ---
+    # Wir leiten genau die Endpunkte weiter, die dein C++ Server kennt.
+    # Regex Match: Beginnt mit /login, /upload, /refresh oder /logout
+    location ~ ^/(login|upload|refresh|logout) {
+        proxy_pass http://crow_backend;
+        
+        # Header weiterreichen, damit der C++ Server die echte IP kennt
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Timeouts für lange Uploads erhöhen (optional)
+        proxy_read_timeout 90s;
+        proxy_connect_timeout 90s;
+    }
+
+    # --- OPTIONAL: Hochgeladene Bilder anzeigen ---
+    # Falls man die Bilder im Browser direkt aufrufen können soll:
+    # http://localhost/uploads/bild.jpg
+    location /uploads/ {
+        # PFAD ANPASSEN: Wo dein C++ Server die Bilder speichert
+        alias /home/user/mein_crow_server/build/uploads/;
+        autoindex off;
+    }
+
+    location /media/ {
+        # WICHTIG: Absoluter Pfad zu deinem Photos-Ordner (wo der CrowWorker hinschiebt)
+        alias /home/user/CrowProject/Photos/;
+        autoindex off; # Kein Directory Listing erlauben
+        expires 30d;   # Browser Caching aktivieren für Performance
+    }
+}
+
+/** ######################
+ich würde dann noch eine C++23 Lösung benötigen, die die Bilder inm uploads-Ordner in der Datenbank erfasst, inklusive EXIF, IPTC und XMP Informationen, sofern diese in den Bildern vorhanden.
+
+Eventuell werden hierfür die Bilder auch an einen anderen Ordner verschoben, um die Überwachung vom uploads-Ordner einfach zu halten.
+
+Was meinst du?
+-->
+Das ist eine exzellente architektonische Entscheidung.
+
+Das Muster, das du beschreibst, nennt sich "Hot Folder" oder "Inbox Pattern".
+
+Inbox (/uploads): Der Webserver schreibt schnell und "dumm" hinein.
+
+Worker Process: Ein Hintergrund-Thread überwacht diesen Ordner.
+
+Processing: Der Worker analysiert die Datei (Metadaten), schreibt in die DB.
+
+Storage (/photos): Nach Erfolg wird die Datei in den endgültigen Ordner verschoben.
+
+Vorteile:
+
+Performance: Der HTTP-Upload (User wartet) wird nicht durch das Parsen von XMP/IPTC blockiert.
+
+Stabilität: Wenn der Server beim Parsen eines korrupten Bildes abstürzt, reißt er den Upload-Request nicht mit runter (wenn Prozess-getrennt) bzw. man kann den Fehler isolieren.
+
+Sauberkeit: Der uploads Ordner bleibt leer. Alles darin ist "noch zu erledigen".
+
+--
+du hast gute Ansätze, Gemini.
+
+Bezüglich dem Datenbank-Design werden wir beide aber nochmal diskutieren. Hier möchte ich separate Tabellen für Bild-Basisdaten, Exif, IPTC und XMP...
+
+Den Namen des Upload-Users in den Bild-Namen schreiben... ok, aber dann muss der Worker diesen beim verschieben in den Photos-Ordner wieder herausnehmen.
+
+Der relative Bilder-Pfad unterhalb von uploads wird im Photo-Ordner übernommen und soll später bei der Web-Gallery als Pfad-Struktur (Breadcrumbs) dienen.
+
+ABer das klären wir in den nächsten Tagen
+--
+Das sind absolut valide und professionelle Einwände. Das Datenbank-Design zu normalisieren (also in verknüpfte Tabellen aufzuteilen) ist langfristig deutlich sauberer, besonders wenn man später gezielt nach "allen Bildern mit ISO 400" oder "allen Bildern mit Keyword X" suchen möchte, ohne riesige Tabellen zu scannen.
+
+Wir halten das also als Roadmap für die nächsten Tage fest:
+
+DB-Design 2.0: Aufsplittung in photos (Basis), exif_data, iptc_data und xmp_data (via Foreign Keys verknüpft).
+
+Dateinamen-Bereinigung: Der Worker fungiert als "Waschstraße": Er liest den Uploader aus dem temporären Namen, speichert die Info in der DB, benennt die Datei wieder sauber um und verschiebt sie.
+
+Pfad-Erhaltung: Die Ordnerstruktur, die der User beim Upload angibt (z.B. urlaub/2025), wird im photos-Ordner 1:1 repliziert (Spiegelung), damit die logische Struktur erhalten bleibt.
+
+Ich speichere diesen Kontext. Wenn du soweit bist, machen wir genau an dieser Stelle weiter und setzen das Datenbank-Schema und den intelligenten Worker um.
+
+Bis dahin viel Erfolg und eine gute Zeit! 👋
+
+/###
+mmer "Continent/Country/State/City or Region/[optional date]". 
+
+Also "/Photos/Asia/China/Yunnan/Lianghe/Thai Buddha Temple/2021-07".  
+
+Leerzeichen werden mit Unterstrich "_" ersetzt.
+Basissprache ist immer Englisch
+/###
+
+/#### DB Schema
+
+-- Tabellen löschen falls Neustart gewünscht
+DROP TABLE IF EXISTS picture_keywords;
+DROP TABLE IF EXISTS keywords;
+DROP TABLE IF EXISTS meta_xmp;
+DROP TABLE IF EXISTS meta_iptc;
+DROP TABLE IF EXISTS meta_exif;
+DROP TABLE IF EXISTS meta_location;
+DROP TABLE IF EXISTS pictures;
+
+-- Rights
+GRANT ALL ON SEQUENCE public.keywords_id_seq TO photo_gallery;
+GRANT ALL ON SEQUENCE public.meta_exif_id_seq TO photo_gallery;
+GRANT ALL ON SEQUENCE public.meta_iptc_id_seq TO photo_gallery;
+GRANT ALL ON SEQUENCE public.meta_location_id_seq TO photo_gallery;
+GRANT ALL ON SEQUENCE public.meta_xmp_id_seq TO photo_gallery;
+GRANT ALL ON SEQUENCE public.pictures_id_seq TO photo_gallery;
+GRANT ALL ON TABLE public.keywords TO photo_gallery;
+GRANT ALL ON TABLE public.meta_exif TO photo_gallery;
+GRANT ALL ON TABLE public.meta_iptc TO photo_gallery;
+GRANT ALL ON TABLE public.meta_location TO photo_gallery;
+GRANT ALL ON TABLE public.meta_xmp TO photo_gallery;
+GRANT ALL ON TABLE public.picture_keywords TO photo_gallery;
+GRANT ALL ON TABLE public.pictures TO photo_gallery;
+
+-- Tabelle 1: Basis Bild-Daten
+CREATE TABLE IF NOT EXISTS pictures (
+    id SERIAL PRIMARY KEY,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,       -- Relativer Pfad
+    full_path TEXT NOT NULL,       -- Absoluter Pfad
+    file_size BIGINT,
+    width INTEGER,
+    height INTEGER,
+    file_datetime TIMESTAMP,
+    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    upload_user TEXT,
+    access_group TEXT DEFAULT 'public'
+);
+
+-- Tabelle 2: Location
+CREATE TABLE IF NOT EXISTS meta_location (
+    id SERIAL PRIMARY KEY,
+    ref_picture INTEGER NOT NULL REFERENCES pictures(id) ON DELETE CASCADE,
+    continent TEXT,
+    country TEXT,
+    country_code TEXT,
+    province TEXT,
+    city TEXT,
+    district TEXT
+);
+
+-- Tabelle 3: Exif
+CREATE TABLE IF NOT EXISTS meta_exif (
+    id SERIAL PRIMARY KEY,
+    ref_picture INTEGER NOT NULL REFERENCES pictures(id) ON DELETE CASCADE,
+    make TEXT,
+    model TEXT,
+    aperture TEXT,
+    iso TEXT,
+    exposure_time TEXT,
+    gps_latitude DOUBLE PRECISION,
+    gps_longitude DOUBLE PRECISION,
+    gps_altitude DOUBLE PRECISION,
+    datetime_original TIMESTAMP
+);
+
+-- Tabelle 4: Iptc (Basisdaten ohne Keywords)
+CREATE TABLE IF NOT EXISTS meta_iptc (
+    id SERIAL PRIMARY KEY,
+    ref_picture INTEGER NOT NULL REFERENCES pictures(id) ON DELETE CASCADE,
+    object_name TEXT,
+    caption TEXT,
+    copyright TEXT,
+    byline TEXT
+);
+
+-- Tabelle 5: Xmp (Basisdaten ohne Keywords)
+CREATE TABLE IF NOT EXISTS meta_xmp (
+    id SERIAL PRIMARY KEY,
+    ref_picture INTEGER NOT NULL REFERENCES pictures(id) ON DELETE CASCADE,
+    title TEXT,
+    description TEXT,
+    rating INTEGER,
+    label TEXT
+);
+
+-- Tabelle 6: Keywords (Pool aller existierenden Tags)
+CREATE TABLE IF NOT EXISTS keywords (
+    id SERIAL PRIMARY KEY,
+    tag TEXT NOT NULL UNIQUE -- Wichtig: Unique Constraint für Performance
+);
+
+-- Tabelle 7: Verknüpfung Bild <-> Keywords (Many-to-Many)
+CREATE TABLE IF NOT EXISTS picture_keywords (
+    picture_id INTEGER NOT NULL REFERENCES pictures(id) ON DELETE CASCADE,
+    keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+    PRIMARY KEY (picture_id, keyword_id)
+);
+
+CREATE OR REPLACE FUNCTION cleanup_unused_keywords()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Lösche Keywords, die in keiner Verknüpfungstabelle mehr auftauchen
+    DELETE FROM keywords
+    WHERE id NOT IN (SELECT DISTINCT keyword_id FROM picture_keywords);
+    
+    RETURN NULL; -- Return Value ist bei AFTER Triggern egal
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_cleanup_keywords
+AFTER DELETE ON picture_keywords
+FOR EACH STATEMENT -- Feuert einmal pro Lösch-Batch, spart Performance
+EXECUTE FUNCTION cleanup_unused_keywords();
+
+/####
+
+# Ubuntu / Debian
+sudo apt update
+sudo apt install \
+    build-essential cmake clang \
+    qt6-base-dev libqt6sql6-psql \
+    libpq-dev \
+    libexiv2-dev pkg-config
+/ ###
+

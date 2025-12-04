@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.23...3.30)
 
 
 project(CrowQtServer 
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Crow Webserver with Qt6 for photo uploads"
     HOMEPAGE_URL "https://github.com/Zheng-Bote/crow_webserver"
     LANGUAGES CXX)
@@ -97,6 +97,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Sql)
 # --- Executable ---
 add_executable(${PROJECT_NAME} main.cpp
     includes/rz_dbmanager.hpp
+    includes/rz_dbmanager.cpp
     includes/rz_middleware.hpp
     includes/rz_helpers.hpp
 )
