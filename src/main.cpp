@@ -139,7 +139,7 @@ cors
     CROW_ROUTE(app, "/upload")
         .methods(crow::HTTPMethod::POST)
         .CROW_MIDDLEWARES(app, AuthMiddleware) 
-    ([](const crow::request& req, crow::response& res){
+    ([&app](const crow::request& req, crow::response& res){
         
         crow::multipart::message msg(req);
         const crow::multipart::part* photoPart = nullptr;
@@ -210,7 +210,14 @@ cors
         // ----------------------------------
 
         //QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+        auto& ctx = app.get_context<AuthMiddleware>(req);
+        QString uploader = QString::fromStdString(ctx.current_user);
         
+        // Dateiname: "admin___20251203_120000___urlaub.jpg"
+        // Wir nutzen "___" als Trenner
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+        QString finalFileName = QString("%1___%2___%3").arg(uploader, timestamp, qFilename);
+
         // 4. Zielverzeichnis bauen
         // Basis ist "uploads". Wenn userSubDir leer ist, bleibt es "uploads/"
         QString targetDir = "uploads";
@@ -227,8 +234,8 @@ cors
         }
 
         // 6. Datei speichern
-        // QString finalPath = targetDir + "/" + QString("%1_%2").arg(timestamp, qFilename);
-        QString finalPath = targetDir + "/" + QString("%1").arg(qFilename);
+        //QString finalPath = targetDir + "/" + QString("%1_%2").arg(timestamp, qFilename);
+        QString finalPath = targetDir + "/" + finalFileName;
 
         QFile file(finalPath);
         if (file.open(QIODevice::WriteOnly)) {

@@ -19,10 +19,10 @@ static const std::string PROJECT_DESCRIPTION = "Crow Webserver with Qt6 for phot
 
 static const std::string PROJECT_EXECUTABLE = "CrowQtServer";
 
-static const std::string PROJECT_VERSION = "0.2.1";
+static const std::string PROJECT_VERSION = "0.3.0";
 static const std::int32_t PROJECT_VERSION_MAJOR{0};
-static const std::int32_t PROJECT_VERSION_MINOR{2};
-static const std::int32_t PROJECT_VERSION_PATCH{1};
+static const std::int32_t PROJECT_VERSION_MINOR{3};
+static const std::int32_t PROJECT_VERSION_PATCH{0};
 
 static const std::string PROJECT_HOMEPAGE_URL = "https://github.com/Zheng-Bote/crow_webserver";
 static const std::string PROG_AUTHOR = "ZHENG Bote";
