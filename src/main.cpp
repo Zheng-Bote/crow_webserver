@@ -9,6 +9,8 @@
 #include <set>
 #include <algorithm> 
 
+#include <QUuid>
+
 #include <openssl/rand.h>
 #include <stdexcept>
 
@@ -331,11 +333,16 @@ cors
 
         int offset = (page - 1) * limit;
 
+        // FIX: Wir nutzen eine UUID als Verbindungsnamen.
+        // Das garantiert, dass dieser Name noch NIE benutzt wurde.
+        // Damit umgehen wir alle "Connection belongs to other thread" Probleme.
+        QString connName = "gallery_" + QUuid::createUuid().toString();
+
         // DB Verbindung
         // Hinweis: Hier eine neue Connection holen (DbManager::getNewConnection...)
         // Der Einfachheit halber nutze ich hier Pseudo-Code für den SQL Teil:
         
-        QSqlDatabase db = DbManager::getNewConnection("gallery_read");
+        QSqlDatabase db = DbManager::getNewConnection(connName);
         if (!db.open()) return crow::response(500, "DB Error");
 
         QSqlQuery q(db);
@@ -362,28 +369,32 @@ cors
         q.exec();
 
         crow::json::wvalue result;
+        std::vector<crow::json::wvalue> list;
+
         int i = 0;
         while(q.next()) {
-            result[i]["id"] = q.value("id").toInt();
-            result[i]["filename"] = q.value("file_name").toString().toStdString();
-            
-            // WICHTIG: Der Pfad für das Frontend (NGINX /media/)
-            // file_path in DB ist z.B. "Asia/China/Yunnan"
-            // file_name ist "img.jpg"
-            // Result URL: "/media/Asia/China/Yunnan/img.jpg"
-            std::string relPath = q.value("file_path").toString().toStdString();
-            std::string fName = q.value("file_name").toString().toStdString();
-            
-            // Pfade sauber verbinden (keine doppelten Slashes)
-            if (relPath.back() != '/') relPath += "/";
-            
-            result[i]["url"] = "http://beelink.local/media/" + relPath + fName;
-            result[i]["city"] = q.value("city").toString().toStdString();
-            result[i]["country"] = q.value("country").toString().toStdString();
-            i++;
+          crow::json::wvalue item;
+                item["id"] = q.value("id").toInt();
+                item["filename"] = q.value("file_name").toString().toStdString();
+                
+                std::string relPath = q.value("file_path").toString().toStdString();
+                std::string fName = q.value("file_name").toString().toStdString();
+                
+                if (!relPath.empty() && relPath.back() != '/') relPath += "/";
+                
+                item["url"] = "http://beelink.local/media/" + relPath + fName;
+                item["city"] = q.value("city").toString().toStdString();
+                item["country"] = q.value("country").toString().toStdString();
+                
+                list.push_back(item);
         }
         
         db.close();
+        // Scope Ende -> db Objekt zerstört.
+        // JETZT ist es sicher, die Verbindung zu entfernen.
+        QSqlDatabase::removeDatabase(connName);
+
+        result = std::move(list);
         return crow::response(result);
     });
 

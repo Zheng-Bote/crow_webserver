@@ -94,6 +94,7 @@ FetchContent_MakeAvailable(libbcrypt)
 find_package(OpenSSL REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Sql)
 
+add_compile_definitions(QT_NO_KEYWORDS)
 # --- Executable ---
 add_executable(${PROJECT_NAME} main.cpp
     includes/rz_dbmanager.hpp
